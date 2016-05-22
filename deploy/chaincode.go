@@ -36,15 +36,22 @@ type User struct {
 	Hash         string   `json:"hash"`
 	FirstName    string   `json:"firstName"`
 	LastName     string   `json:"lastName"`
-	Things       []string `json:"things"` //Array of thing IDs
+	Bikes       []string `json:"bikes"` //Array of bike IDs
 	Address      string   `json:"address"`
 	PhoneNumber  string   `json:"phoneNumber"`
 	EmailAddress string   `json:"emailAddress"`
 }
 
-type Thing struct {
-	ThingId     string `json:"thingId"`
-	Description string `json:"description"`
+type Bike struct {
+	bikeId     	string `json:"bikeId"`
+	Owner 	    	string `json:"owner_id"`
+	Status		string `json:"status"`
+	Lock_id		string `json:"lock_id"`
+	Brand		string `json:"brand"`
+	Type		string `json:"type"`
+	Yearofbuild	string `json:"yearofbuild"`
+	Color		string `json:"color"`
+	Comments	string `json:"comments"`
 }
 
 //=================================================================================================================================
@@ -82,11 +89,11 @@ var SomeStatus = map[string]bool{
 //    if err != nil { return nil, errors.New("Error storing new signaturesIndex into ledger") }
 //=================================================================================================================================
 var usersIndexStr = "_users"
-var thingsIndexStr = "_things"
+var bikesIndexStr = "_bikes"
 
 //==============================================================================================================================
 //	Run - Called on chaincode invoke. Takes a function name passed and calls that function. Converts some
-//		  initial arguments passed to other things for use in the called function e.g. name -> ecert
+//		  initial arguments passed to other bikes for use in the called function e.g. name -> ecert
 //==============================================================================================================================
 func (t *SimpleChaincode) Run(stub *shim.ChaincodeStub, function string, args []string) ([]byte, error) {
 	fmt.Println("run is running " + function)
@@ -100,8 +107,8 @@ func (t *SimpleChaincode) Invoke(stub *shim.ChaincodeStub, function string, args
 		return t.Init(stub, "init", args)
 	} else if function == "add_user" {
 		return t.add_user(stub, args)
-	} else if function == "add_thing" {
-		return t.add_thing(stub, args)
+	} else if function == "add_bike" {
+		return t.add_bike(stub, args)
 	}
 
 	return nil, errors.New("Received unknown invoke function name")
@@ -117,10 +124,10 @@ func (t *SimpleChaincode) Query(stub *shim.ChaincodeStub, function string, args 
 
 	if args[0] == "get_user" {
 		return t.get_user(stub, args[1])
-	} else if args[0] == "get_thing" {
-		return t.get_thing(stub, args)
-	} else if args[0] == "get_all_things" {
-		return t.get_all_things(stub, args)
+	} else if args[0] == "get_bike" {
+		return t.get_bike(stub, args)
+	} else if args[0] == "get_all_bikes" {
+		return t.get_all_bikes(stub, args)
 	} else if args[0] == "authenticate" {
 		return t.authenticate(stub, args)
 	}
@@ -298,20 +305,20 @@ func (t *SimpleChaincode) add_user(stub *shim.ChaincodeStub, args []string) ([]b
 	return nil, nil
 }
 
-func (t *SimpleChaincode) add_thing(stub *shim.ChaincodeStub, args []string) ([]byte, error) {
+func (t *SimpleChaincode) add_bike(stub *shim.ChaincodeStub, args []string) ([]byte, error) {
 
 	// args
 	// 		0			1
-	//	   index	   thing JSON object (as string)
+	//	   index	   bike JSON object (as string)
 
-	id, err := append_id(stub, thingsIndexStr, args[0], false)
+	id, err := append_id(stub, bikesIndexStr, args[0], false)
 	if err != nil {
-		return nil, errors.New("Error creating new id for thing " + args[0])
+		return nil, errors.New("Error creating new id for bike " + args[0])
 	}
 
 	err = stub.PutState(string(id), []byte(args[1]))
 	if err != nil {
-		return nil, errors.New("Error putting thing data on ledger")
+		return nil, errors.New("Error putting bike data on ledger")
 	}
 
 	return nil, nil
@@ -334,11 +341,11 @@ func (t *SimpleChaincode) get_user(stub *shim.ChaincodeStub, userID string) ([]b
 
 }
 
-func (t *SimpleChaincode) get_thing(stub *shim.ChaincodeStub, args []string) ([]byte, error) {
+func (t *SimpleChaincode) get_bike(stub *shim.ChaincodeStub, args []string) ([]byte, error) {
 
 	//Args
 	//			1
-	//		thingID
+	//		bikeID
 
 	bytes, err := stub.GetState(args[1])
 
@@ -350,43 +357,42 @@ func (t *SimpleChaincode) get_thing(stub *shim.ChaincodeStub, args []string) ([]
 
 }
 
-func (t *SimpleChaincode) get_all_things(stub *shim.ChaincodeStub, args []string) ([]byte, error) {
+func (t *SimpleChaincode) get_all_bikes(stub *shim.ChaincodeStub, args []string) ([]byte, error) {
 
-	indexAsBytes, err := stub.GetState(thingsIndexStr)
+	indexAsBytes, err := stub.GetState(bikesIndexStr)
 	if err != nil {
-		return nil, errors.New("Failed to get " + thingsIndexStr)
+		return nil, errors.New("Failed to get " + bikesIndexStr)
 	}
-	fmt.Println(thingsIndexStr + " retrieved")
-	s := string(indexAsBytes[:])
-	fmt.Println(s)
+	fmt.Println(bikesIndexStr + " retrieved")
+	fmt.Println(string(indexAsBytes[:]))
 
 	// Unmarshal the index
-	var thingsIndex []string
-	errx := json.Unmarshal(indexAsBytes, &thingsIndex)
+	var bikesIndex []string
+	errx := json.Unmarshal(indexAsBytes, &bikesIndex)
 	if errx != nil {
 		fmt.Println(errx)
-		return nil, errors.New("Failed to get " + thingsIndexStr)
+		return nil, errors.New("Failed to get " + bikesIndexStr)
 	}
 
-	var things []Thing
-	for _, thing := range thingsIndex {
+	var bikes []Bike
+	for _, bike := range bikesIndex {
 
-		bytes, err := stub.GetState(thing)
+		bytes, err := stub.GetState(bike)
 		if err != nil {
-			return nil, errors.New("Unable to get thing with ID: " + thing)
+			return nil, errors.New("Unable to get bike with ID: " + bike)
 		}
 
-		var t Thing
+		var t Bike
 		json.Unmarshal(bytes, &t)
-		things = append(things, t)
+		bikes = append(bikes, t)
 	}
 
-	thingsAsJsonBytes, _ := json.Marshal(things)
+	bikesAsJsonBytes, _ := json.Marshal(bikes)
 	if err != nil {
-		return nil, errors.New("Could not convert things to JSON ")
+		return nil, errors.New("Could not convert bikes to JSON ")
 	}
 
-	return thingsAsJsonBytes, nil
+	return bikesAsJsonBytes, nil
 }
 
 func (t *SimpleChaincode) authenticate(stub *shim.ChaincodeStub, args []string) ([]byte, error) {
@@ -428,24 +434,23 @@ func (t *SimpleChaincode) authenticate(stub *shim.ChaincodeStub, args []string) 
 
 	var str string
 
-	// If user has role 2, get his things
+	// If user has role 2, get his bikes
 	if certRole == 2 {
 
-		var things []Thing
-		for _, thing := range u.Things {
-
-			bytes, err := stub.GetState(thing)
+		var bikes []Bike
+		for _, bike := range u.Bikes {
+			bytes, err := stub.GetState(bike)
 			if err != nil {
-				return nil, errors.New("Unable to get thing with ID: " + thing)
+				return nil, errors.New("Unable to get bike with ID: " + bike)
 			}
 
-			var t Thing
-			json.Unmarshal(bytes, &t)
-			things = append(things, t)
+			var t Bike
+		    json.Unmarshal(bytes, &t)
+			bikes = append(bikes, t)
 
 		}
-		thingsAsJsonBytes, _ := json.Marshal(things)
-		str = `{ "authenticated": true, "certRole": ` + certRoleAsString + `,"user": ` + string(user) + `,"things":"` + string(thingsAsJsonBytes) + `"}`
+		bikesAsJsonBytes, _ := json.Marshal(bikes)
+		str = `{ "authenticated": true, "certRole": ` + certRoleAsString + `,"user": ` + string(user) + `,"bikes":"` + string(bikesAsJsonBytes) + `"}`
 	} else {
 		str = `{ "authenticated": true, "certRole": ` + certRoleAsString + `,"user": ` + string(user) + ` }`
 	}
