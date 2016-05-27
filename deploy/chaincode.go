@@ -109,6 +109,8 @@ func (t *SimpleChaincode) Invoke(stub *shim.ChaincodeStub, function string, args
 		return t.add_user(stub, args)
 	} else if function == "add_bike" {
 		return t.add_bike(stub, args)
+	} else if function == "change_bike" {
+		return t.change_bike(stub, args)
 	}
 
 	return nil, errors.New("Received unknown invoke function name")
@@ -324,6 +326,77 @@ func (t *SimpleChaincode) add_bike(stub *shim.ChaincodeStub, args []string) ([]b
 	return nil, nil
 
 }
+
+//function to change the owner of a bike
+func (t *SimpleChaincode) change_bike(stub *shim.ChaincodeStub, args []string) ([]byte, error) {
+	//Args
+	//			1
+	//		bikeID
+	// getting bike with  correct id
+	var strarr []string
+	strarr[0] = args[0]
+
+	bike, err := t.get_bike(stub, strarr)
+	if err != nil {
+		return nil, errors.New("Error finding bike in blockchain")
+		}
+
+	var b Bike
+	json.Unmarshal(bike, &b)
+	//change owner of bike to new owner (just in the bike)
+	owner_old := b.Owner
+	b.Owner = args[1]
+	bstr, _ := json.Marshal(b)
+	println("test " + b.Owner + b.bikeId + "asdf")
+	//put changes in the blockchain
+	err = stub.PutState(args[0], bstr )
+	if err != nil {
+		return nil, errors.New("Error putting bike data on ledger")
+		}
+
+	//getting old owner
+	user, err := t.get_user(stub, owner_old )
+	if err != nil {
+		return nil, errors.New("Error finding user in blockchain")
+		}
+
+	var u User
+	json.Unmarshal(user, &u)
+	//removing bike id from bikes, old owner
+	for i := 0; i < len(u.Bikes); i++  {
+	//if bikes[i] is the same as the id found, delete it, and save it in the blockchain
+	if u.Bikes[i] == b.bikeId {
+		u.Bikes = append(u.Bikes[:i], u.Bikes[i + 1:]...)
+		ustr, _ := json.Marshal(u)
+		println("test " + u.UserId  + "asdf")
+		err = stub.PutState(u.UserId, ustr)
+		if err != nil {
+			return nil, errors.New("Error removing bike from old user")
+			}
+		}
+	}
+
+	//retreiving new owner
+	new_user, err := t.get_user(stub, args[1] )
+	if err != nil {
+		return nil, errors.New("Error finding user in blockchain")
+		}
+	var n User
+	json.Unmarshal(new_user, &n)
+	//adding bike id to bikes from new owner
+	n.Bikes = append(n.Bikes, b.bikeId)
+	nstr, _ := json.Marshal(n)
+	// args
+	// 		0			1
+	//	   index	   bike JSON object (as string)
+	println("test " + n.UserId  + "asdf")
+	err = stub.PutState(n.UserId, nstr )
+	if err != nil {
+		return nil, errors.New("Error registering bike in the new ownerdata")
+		}
+	return nil, nil
+
+};
 
 //==============================================================================================================================
 //		Query Functions
