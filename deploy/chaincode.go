@@ -36,22 +36,26 @@ type User struct {
 	Hash         string   `json:"hash"`
 	FirstName    string   `json:"firstName"`
 	LastName     string   `json:"lastName"`
-	Bikes       []string `json:"bikes"` //Array of bike IDs
+	Bikes       []string  `json:"bikes"` //Array of bike IDs
 	Address      string   `json:"address"`
 	PhoneNumber  string   `json:"phoneNumber"`
 	EmailAddress string   `json:"emailAddress"`
+	Role         string   `json:"role"` // TODO: make enum (if json.marshal can handle it) cases should be updated as well!!
 }
 
 type Bike struct {
 	BikeId     	string `json:"bikeId"`
+	FrameNumber   	string `json:"frame_number"`
 	Owner 	    	string `json:"owner_id"`
 	Status		string `json:"status"`
-	Lock_id		string `json:"lock_id"`
+	LockId		string `json:"lock_id"`
 	Brand		string `json:"brand"`
 	Type		string `json:"type"`
-	Yearofbuild	string `json:"yearofbuild"`
+	YearOfBuild	string `json:"yearofbuild"`
 	Color		string `json:"color"`
+	Price		string `json:"price"`
 	Comments	string `json:"comments"`
+	Insured		bool 	`json:"insured"`
 }
 
 //=================================================================================================================================
@@ -113,6 +117,8 @@ func (t *SimpleChaincode) Invoke(stub *shim.ChaincodeStub, function string, args
 		return t.change_bike(stub, args)
 	} else if function == "mark_stolen" {
 		return t.mark_stolen(stub, args)
+	} else if function == "insure" {
+		return t.insure(stub, args)
 	}
 
 	return nil, errors.New("Received unknown invoke function name")
@@ -189,8 +195,7 @@ func append_id(stub *shim.ChaincodeStub, indexStr string, id string, create bool
 	if err != nil {
 		return nil, errors.New("Error storing new " + indexStr + " into ledger")
 	}
-	fmt.Println("Created new id.")
-	fmt.Println(newId)
+	fmt.Println("Created new id " + newId);
 	return []byte(newId), nil
 }
 
@@ -310,141 +315,192 @@ func (t *SimpleChaincode) add_user(stub *shim.ChaincodeStub, args []string) ([]b
 }
 
 func (t *SimpleChaincode) add_bike(stub *shim.ChaincodeStub, args []string) ([]byte, error) {
-
 	// args
-	// 		0			1
-	//	   index	   bike JSON object (as string)
+	bikeAsJsonString := args[0]
 
-	id, err := append_id(stub, bikesIndexStr, args[0], false)
+	// TODO check userid/owner
+	id, err := append_id(stub, bikesIndexStr, bikesIndexStr, true)
 	if err != nil {
-		return nil, errors.New("Error creating new id for bike " + args[0])
+		return nil, errors.New("Error creating new id for bike " + string(bikeAsJsonString))
 	}
-
+	fmt.Println(bikeAsJsonString)
 	var b Bike
-	json.Unmarshal([]byte(args[1]), &b)
+	json.Unmarshal([]byte(bikeAsJsonString), &b)
 	b.BikeId = string(id)
+	if b.Status == "" {
+		b.Status = "OK"
+	}
+	// TODO controleren checks
 
-	bstr, _ := json.Marshal(b)
-	err = stub.PutState(b.BikeId, []byte(bstr))
+
+	bikeAsByteArray, _ := json.Marshal(b)
+	err = stub.PutState(b.BikeId, bikeAsByteArray)
 	if err != nil {
 		return nil, errors.New("Error putting bike data on ledger")
 	} else {
 		fmt.Println("Wrote bike with id " + b.BikeId + " to the ledger.")
+		fmt.Println([]byte(bikeAsJsonString))
 	}
 
 	// Add to user bikes
-
 	if(len(b.Owner) > 0) {
-		user, err := t.get_user(stub, b.Owner )
+		u, err := t.GetUser(stub, b.Owner)
 		if err != nil {
 			return nil, errors.New("Error finding user in blockchain")
 		}
 
-		var u User
-		json.Unmarshal(user, &u)
-
 		//adding bike id to bikes from new owner
-		u.Bikes = append(u.Bikes, string(id))
+		u.Bikes = append(u.Bikes, b.BikeId)
 		nstr, _ := json.Marshal(u)
 		err = stub.PutState(u.UserId, nstr)
 		fmt.Println("Added bike with id " + b.BikeId + " to the bikes of user " + u.UserId)
-	}
+	} //first user, could be fabric or bikeshop
+	// else if {}
+
+
 
 	return nil, nil
 }
 
 //function to change the owner of a bike
 func (t *SimpleChaincode) change_bike(stub *shim.ChaincodeStub, args []string) ([]byte, error) {
-	//Args
-	//			1
-	//		bikeID
-	// getting bike with  correct id
-	var strarr []string
-	strarr[0] = args[0]
+	bikeId := args[0]
+	newOwnerId := args[1]
+	oldOwnerId := args[2]
 
-	bike, err := t.get_bike(stub, strarr)
+	fmt.Println("Will transfer bike " + bikeId + " from " + oldOwnerId + " to " + newOwnerId)
+
+	oldOwner, err := t.GetUser(stub, oldOwnerId)
+	if err != nil {
+		return nil, errors.New("Error finding old owner in blockchain")
+	}
+	newOwner, err := t.GetUser(stub, newOwnerId)
+	if err != nil {
+		return nil, errors.New("Error finding new owner in blockchain")
+	}
+	// getting bike with  correct id
+	b, err := t.GetBike(stub, bikeId, oldOwner)
 	if err != nil {
 		return nil, errors.New("Error finding bike in blockchain")
-		}
+	}
 
-	var b Bike
-	json.Unmarshal(bike, &b)
+	// check if user is really the owner of the bike
+	if oldOwnerId != b.Owner {
+		return nil, errors.New("gebruiker is geen eigenaar van de fiets")
+	}
+
 	//change owner of bike to new owner (just in the bike)
-	owner_old := b.Owner
-	b.Owner = args[1]
+	fmt.Println("oude gebruiker is " + oldOwnerId + " en komt overeen met "+ b.Owner)
+	b.Owner = newOwnerId
 	bstr, _ := json.Marshal(b)
-	println("test " + b.Owner + b.BikeId + "asdf")
+	fmt.Println("nieuwe gebruiker " + b.Owner +" het id van de fiets "+ b.BikeId)
 	//put changes in the blockchain
-	err = stub.PutState(args[0], bstr)
+	err = stub.PutState(bikeId, bstr)
 	if err != nil {
 		return nil, errors.New("Error putting bike data on ledger")
-		}
+	}
 
-	//getting old owner
-	user, err := t.get_user(stub, owner_old )
-	if err != nil {
-		return nil, errors.New("Error finding user in blockchain")
-		}
-
-	var u User
-	json.Unmarshal(user, &u)
 	//removing bike id from bikes, old owner
-	for i := 0; i < len(u.Bikes); i++  {
+	for i := 0; i < len(oldOwner.Bikes); i++  {
 	//if bikes[i] is the same as the id found, delete it, and save it in the blockchain
-	if u.Bikes[i] == b.BikeId {
-		u.Bikes = append(u.Bikes[:i], u.Bikes[i + 1:]...)
-		ustr, _ := json.Marshal(u)
-		println("test " + u.UserId  + "asdf")
-		err = stub.PutState(u.UserId, ustr)
-		if err != nil {
-			return nil, errors.New("Error removing bike from old user")
+		if oldOwner.Bikes[i] == b.BikeId {
+			oldOwner.Bikes = append(oldOwner.Bikes[:i], oldOwner.Bikes[i + 1:]...)
+			ustr, _ := json.Marshal(oldOwner)
+			fmt.Println("verwijderen van " + oldOwner.UserId  + " bij fiets " + b.BikeId + " is gelukt")
+			err = stub.PutState(oldOwner.UserId, ustr)
+			if err != nil {
+				return nil, errors.New("Error removing bike from old user")
 			}
 		}
 	}
 
-	//retreiving new owner
-	new_user, err := t.get_user(stub, args[1] )
-	if err != nil {
-		return nil, errors.New("Error finding user in blockchain")
-		}
-	var n User
-	json.Unmarshal(new_user, &n)
 	//adding bike id to bikes from new owner
-	n.Bikes = append(n.Bikes, b.BikeId)
-	nstr, _ := json.Marshal(n)
+	newOwner.Bikes = append(newOwner.Bikes, b.BikeId)
+	nstr, _ := json.Marshal(newOwner)
 	// args
 	// 		0			1
 	//	   index	   bike JSON object (as string)
-	println("test " + n.UserId  + "asdf")
-	err = stub.PutState(n.UserId, nstr )
+	println("ophalen van gebruiker " + newOwner.UserId  + " is gelukt")
+	err = stub.PutState(newOwner.UserId, nstr )
 	if err != nil {
 		return nil, errors.New("Error registering bike in the new ownerdata")
-		}
+	}
 	return nil, nil
-
 };
 
 func (t *SimpleChaincode) mark_stolen(stub *shim.ChaincodeStub, args []string) ([]byte, error) {
-	fmt.Println(stub.GetCallerMetadata())
-	fmt.Println(stub.GetCallerCertificate())
-	fmt.Println(stub.CertAttributes())
+	bikeid := args[0]
+	userid := args[1]
 
-	// TODO check user type
+	// TODO:
+	// validate role
+	// if cop and status = Aangifte gedaan -> Aangifte verwerkt (oid)
+	//TODO is done, review needed, see changesatus
 
-	bytes, err := stub.GetState(args[0])
+	changedBike, err := t.ChangeStatus(stub, bikeid, userid, "Aangifte gedaan")
+	return changedBike, err
+}
+
+func (t *SimpleChaincode) ChangeStatus(stub *shim.ChaincodeStub, bikeid, userid, status string) ([]byte, error) {
+	// TODO validations, role, etc,
+	// done review needed
+	fmt.Println("[ChangeStatus] " + bikeid + " will be " + status)
+	u, err := t.GetUser(stub, userid)
 	if err != nil {
-		return nil, errors.New("Error getting bike from ledger")
+		return nil, errors.New("Could not retrieve user from ledger")
 	}
 
-	var b Bike
-	err = json.Unmarshal(bytes, &b)
+	b, err := t.GetBike(stub, bikeid, u)
+	if err != nil {
+		return nil, errors.New("Could not retrieve bike from ledger")
+	}
+	// switch to determin preconditions, and validate input/role
+	switch u.Role {
+	case "":
+		return nil, errors.New("user has no role")
+	case "1":
+		if b.Owner != u.UserId {
+			return nil, errors.New("gebruiker is geen eigenaar")
+		}
+	case "2":
+		if b.Status != "Aangifte gedaan" || (b.Status != "Aangifte bevestigd" || (b.Status != "Fiets gevonden")) {
+			return nil, errors.New("Fiets niet gestolen, wijzigen moet gebeuren vanuit de gebruiker")
+		}
+	default:
+		return nil, errors.New("undefined role, or no rights to change the status")
+	}
+	b.Status = status
 
-	b.Status = "Marked stolen"
+	bikeAsByteArray, _ := json.Marshal(b)
+	err = stub.PutState(bikeid, bikeAsByteArray)
 
-	nstr, _ := json.Marshal(b)
-	err = stub.PutState(args[0], nstr)
+	fmt.Println("Marked " + bikeid + " as stolen")
+	return bikeAsByteArray, err
+}
 
-	return []byte(nstr), err
+
+func (t *SimpleChaincode) insure(stub *shim.ChaincodeStub, args []string) ([]byte, error) {
+	bikeid := args[0]
+	userid := args[1]
+
+	user, err := t.GetUser(stub, userid)
+	bike, err := t.GetBike(stub, bikeid, user)
+	if err != nil {
+		return nil, errors.New("Could not retrieve bike from ledger")
+	}
+
+	// TODO validate
+	// validation: review needed
+	if (user.Role != "1") || (user.UserId != bike.Owner) {
+		return nil, errors.New("User has no rights of insuring the bike, or is not a owner of this bike")
+	}
+	bike.Insured = true
+
+	bikeAsByteArray, _ := json.Marshal(bike)
+	err = stub.PutState(bikeid, bikeAsByteArray)
+
+	fmt.Println("Insured " + bikeid + ".")
+	return bikeAsByteArray, err
 }
 
 
@@ -467,29 +523,32 @@ func (t *SimpleChaincode) get_user(stub *shim.ChaincodeStub, userID string) ([]b
 func (t *SimpleChaincode) get_bike(stub *shim.ChaincodeStub, args []string) ([]byte, error) {
 
 	//Args
-	//			1
-	//		bikeID
+	//1		bikeID
+	//2		UserID
 
-	bytes, err := stub.GetState(args[1])
-
+	//get user
+	usr, err := stub.GetState(args[2])
+	var u User
+	json.Unmarshal(usr, &u)
 	if err != nil {
-		return nil, errors.New("Error getting from ledger")
+		return nil, errors.New("Error getting user from ledger")
 	}
-
+	//get bike
+	bytes, err := stub.GetState(args[1])
+	var b Bike
+	json.Unmarshal(bytes, &b)
+	if err != nil {
+		return nil, errors.New("Error getting bike from ledger")
+	}
 	return bytes, nil
-
 }
 
 func (t *SimpleChaincode) get_all_bikes(stub *shim.ChaincodeStub, args []string) ([]byte, error) {
-	var err error
-	var bikes []Bike
+	username := args[1]
 
-	// TODO use secure context
-	if (len(args) > 1 && len(args[1]) > 0 ) {
-		bikes, err = t.GetUserBikes(stub, args[1])
-	} else {
-		bikes, err = t.GetAllBikes(stub)
-	}
+	u, err := t.GetUser(stub, username)
+	bikes, err := t.GetAllBikes(stub, u)
+
 	if err != nil {
 		return nil, errors.New("Could not get bikes")
 	}
@@ -503,62 +562,104 @@ func (t *SimpleChaincode) get_all_bikes(stub *shim.ChaincodeStub, args []string)
 }
 
 
+// Get user and check password. We don't use the Certificate yet.
 func (t *SimpleChaincode) authenticate(stub *shim.ChaincodeStub, args []string) ([]byte, error) {
 
-	// Args
-	//	1		2
-	//	userId	password
-
-	// TODO: get the certificate of the calling user. Is the calling user
-	// sent correctly by IBC? (values below are empty)
-	fmt.Println(stub.GetCallerMetadata())
-	fmt.Println(stub.GetCallerCertificate())
-	//fmt.Println(stub.CertAttributes())
-
-
 	username := args[1]
-	user, err := t.get_user(stub, username)
-	// If user can not be found in ledgerstore, return authenticated false
-	if err != nil {
-		return []byte(`{ "authenticated": false, "certRole": -1  }`), nil
+	//password := args[2]
+
+	user, err := t.GetUser(stub, username)
+	if err != nil { /*|| user.Password != password*/
+		return []byte(`{ "authenticated": false, "certRole": -1  }`), err
 	}
 
-	bikes, err := t.GetUserBikes(stub, username)
-	if err != nil {
-		return []byte(`{ "authenticated": false, "certRole": -1  }`), nil
-	}
+	userAsJsonBytes, _ := json.Marshal(user)
+	str := `{ "authenticated": true, "certRole": 2,"user": ` + string(userAsJsonBytes) + `}`
 
-	bikesAsJsonBytes, _ := json.Marshal(bikes)
-	str := `{ "authenticated": true, "certRole": 2,"user": ` + string(user) + `,"bikes":` + string(bikesAsJsonBytes) + `}`
-
-	// validate passwords
 	return []byte(str), nil
 }
 
-
-func (t *SimpleChaincode) GetUserBikes(stub *shim.ChaincodeStub, username string) ([]Bike, error) {
-	user, err := t.get_user(stub, username)
-	if err != nil {
-		return nil, errors.New("Unable to get user with username: " + username)
-	}
+func (t *SimpleChaincode) GetUser(stub *shim.ChaincodeStub, username string) (User, error) {
 	var u User
-	json.Unmarshal(user, &u)
 
-	var bikes []Bike
-	for _, bike := range u.Bikes {
-		bytes, err := stub.GetState(bike)
-		if err != nil {
-			return nil, errors.New("Unable to get bike with ID: " + bike)
-		}
-		var b Bike
-		json.Unmarshal(bytes, &b)
-		fmt.Println("Retrieved bike with ID: " + b.BikeId)
-		bikes = append(bikes, b)
+	userbytes, err := t.get_user(stub, username)
+	if err != nil {
+		return u, errors.New("Unable to get user with username: " + username)
 	}
+	err = json.Unmarshal(userbytes, &u)
+
+	return u, err
+}
+
+func (t *SimpleChaincode) GetBike(stub *shim.ChaincodeStub, bikeid string, u User) (Bike, error) {
+	fmt.Println("[GetBike] Retrieving bike: " + bikeid)
+	var b Bike
+	bytes, err := stub.GetState(bikeid)
+	if err != nil {
+		return b, errors.New("Unable to get bike with ID: " + bikeid)
+	}
+	err = json.Unmarshal(bytes, &b)
+
+	//create switch, check role. if role is 1, its a normal user
+	fmt.Println("role is " + u.Role)
+	switch u.Role {
+	case "":
+		return b, errors.New("user has no role")
+	case "1":
+		if b.Owner != u.UserId {
+			return b, errors.New("gebruiker is geen eigenaar")
+		}
+
+	case "2":
+		if b.Status != "Aangifte gedaan" {
+			return b, errors.New("Fiets niet gestolen")
+		}
+	case "3":
+		if !b.Insured {
+			return b, errors.New("fiets niet verzekerd")
+		}
+	default:
+		return b, errors.New("undefined role")
+	}
+	//moddify results by role TODO nog niet af
+	if u.Role == "2" {
+
+	}
+
+	return b, err
+}
+
+// Returns bikes. If user type = 1 only user bikes, else all bikes
+func (t *SimpleChaincode) GetAllBikes(stub *shim.ChaincodeStub, u User) ([]Bike, error) {
+	var bikesIndex []string
+	var bikes []Bike
+	var err error
+
+	if u.Role == "1" {
+		bikesIndex = u.Bikes
+	} else {
+		bikesIndex, err = t.GetAllBikeIds(stub) // will this return nil or an empty array?
+	}
+
+	if bikesIndex == nil {
+		return bikes, err
+	}
+
+	for _, bikeid := range bikesIndex {
+		bike, err := t.GetBike(stub, bikeid, u)
+
+		// TODO: disable certain fields based on role
+
+
+		if err == nil {
+			bikes = append(bikes, bike)
+		}
+	}
+
 	return bikes, nil
 }
 
-func (t *SimpleChaincode) GetAllBikes(stub *shim.ChaincodeStub) ([]Bike, error) {
+func (t *SimpleChaincode) GetAllBikeIds(stub *shim.ChaincodeStub) ([]string, error) {
 	indexAsBytes, err := stub.GetState(bikesIndexStr)
 	if err != nil {
 		return nil, errors.New("Failed to get " + bikesIndexStr)
@@ -573,19 +674,5 @@ func (t *SimpleChaincode) GetAllBikes(stub *shim.ChaincodeStub) ([]Bike, error) 
 		fmt.Println(err)
 		return nil, errors.New("Failed to get " + bikesIndexStr)
 	}
-
-	var bikes []Bike
-	for _, bike := range bikesIndex {
-
-		bytes, err := stub.GetState(bike)
-		if err != nil {
-			return nil, errors.New("Unable to get bike with ID: " + bike)
-		}
-
-		var t Bike
-		json.Unmarshal(bytes, &t)
-		bikes = append(bikes, t)
-	}
-
-	return bikes, nil
+	return bikesIndex, err
 }
