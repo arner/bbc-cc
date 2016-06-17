@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"reflect"
 	"strconv"
+	"math"
 )
 
 //==============================================================================================================================
@@ -40,7 +41,7 @@ type User struct {
 	Address      string   `json:"address"`
 	PhoneNumber  string   `json:"phoneNumber"`
 	EmailAddress string   `json:"emailAddress"`
-	Role         string   `json:"role"` // TODO: make enum (if json.marshal can handle it) cases should be updated as well!!
+	Role         string   `json:"role"` // TODO: make enum (if json.marshal can handle it) if done, cases should be updated as well!!
 }
 
 type Bike struct {
@@ -53,7 +54,9 @@ type Bike struct {
 	Type		string `json:"type"`
 	YearOfBuild	string `json:"yearofbuild"`
 	Color		string `json:"color"`
-	Price		string `json:"price"`
+	DefaultPrice	float64 `json:"defaultprice"`
+	SellPrice	float64 `json:"sellprice"`
+	InsuranceValue 	float64 `json:"insurancevalue"`
 	Comments	string `json:"comments"`
 	Insured		bool 	`json:"insured"`
 }
@@ -140,8 +143,9 @@ func (t *SimpleChaincode) Query(stub *shim.ChaincodeStub, function string, args 
 		return t.get_all_bikes(stub, args)
 	} else if args[0] == "authenticate" {
 		return t.authenticate(stub, args)
+	} else if args[0] == "get_all_users" {
+		return t.get_all_users(stub)
 	}
-
 	return nil, errors.New("Received unknown query function name")
 }
 
@@ -218,20 +222,17 @@ func (t *SimpleChaincode) get_ecert(stub *shim.ChaincodeStub, name string) ([]by
 	var cert ECertResponse
 
 	response, err := http.Get("http://localhost:5000/registrar/" + name + "/ecert") // Calls out to the HyperLedger REST API to get the ecert of the user with that name
-
 	if err != nil {
 		return nil, errors.New("Could not get ecert")
 	}
 
 	defer response.Body.Close()
 	contents, err := ioutil.ReadAll(response.Body) // Read the response from the http callout into the variable contents
-
 	if err != nil {
 		return nil, errors.New("Could not read body")
 	}
 
 	err = json.Unmarshal(contents, &cert)
-
 	if err != nil {
 		return nil, errors.New("ECert not found for user: " + name)
 	}
@@ -242,15 +243,12 @@ func (t *SimpleChaincode) get_ecert(stub *shim.ChaincodeStub, name string) ([]by
 func (t *SimpleChaincode) get_cert_username(stub *shim.ChaincodeStub, encodedCert string) (string, error) {
 
 	decodedCert, err := url.QueryUnescape(encodedCert) // make % etc normal //
-
 	if err != nil {
 		return "", errors.New("Could not decode certificate")
 	}
 
 	pem, _ := pem.Decode([]byte(decodedCert)) // Make Plain text   //
-
 	x509Cert, err := x509.ParseCertificate(pem.Bytes)
-
 	if err != nil {
 		return "", errors.New("Couldn't parse certificate")
 	}
@@ -263,15 +261,12 @@ func (t *SimpleChaincode) check_role(stub *shim.ChaincodeStub, encodedCert strin
 	ECertSubjectRole := asn1.ObjectIdentifier{2, 1, 3, 4, 5, 6, 7}
 
 	decodedCert, err := url.QueryUnescape(encodedCert) // make % etc normal //
-
 	if err != nil {
 		return -1, errors.New("Could not decode certificate")
 	}
 
 	pem, _ := pem.Decode([]byte(decodedCert)) // Make Plain text   //
-
 	x509Cert, err := x509.ParseCertificate(pem.Bytes) // Extract Certificate from argument //
-
 	if err != nil {
 		return -1, errors.New("Couldn't parse certificate")
 	}
@@ -330,8 +325,6 @@ func (t *SimpleChaincode) add_bike(stub *shim.ChaincodeStub, args []string) ([]b
 	if b.Status == "" {
 		b.Status = "OK"
 	}
-	// TODO controleren checks
-
 
 	bikeAsByteArray, _ := json.Marshal(b)
 	err = stub.PutState(b.BikeId, bikeAsByteArray)
@@ -348,16 +341,13 @@ func (t *SimpleChaincode) add_bike(stub *shim.ChaincodeStub, args []string) ([]b
 		if err != nil {
 			return nil, errors.New("Error finding user in blockchain")
 		}
-
 		//adding bike id to bikes from new owner
 		u.Bikes = append(u.Bikes, b.BikeId)
 		nstr, _ := json.Marshal(u)
 		err = stub.PutState(u.UserId, nstr)
 		fmt.Println("Added bike with id " + b.BikeId + " to the bikes of user " + u.UserId)
 	} //first user, could be fabric or bikeshop
-	// else if {}
-
-
+	// else if {} bovenstaand gedeelte werkt niet helemaal volgens mij
 
 	return nil, nil
 }
@@ -413,6 +403,19 @@ func (t *SimpleChaincode) change_bike(stub *shim.ChaincodeStub, args []string) (
 			}
 		}
 	}
+	//TODO sell price should be given up. Default is no selling price
+	if b.SellPrice != 0 && b.SellPrice < b.DefaultPrice && b.Insured {
+		b.InsuranceValue = ((b.SellPrice + b.DefaultPrice)/2)
+	} else if b.Insured {
+		b.InsuranceValue = b.DefaultPrice
+	}
+	//round insurance value to 2 decimals
+	if b.InsuranceValue > 0 {
+		pow := math.Pow(10, float64(2))
+		digit := pow * b.InsuranceValue
+		round := math.Ceil(digit)
+		b.InsuranceValue = round / pow
+	}
 
 	//adding bike id to bikes from new owner
 	newOwner.Bikes = append(newOwner.Bikes, b.BikeId)
@@ -431,35 +434,62 @@ func (t *SimpleChaincode) change_bike(stub *shim.ChaincodeStub, args []string) (
 func (t *SimpleChaincode) mark_stolen(stub *shim.ChaincodeStub, args []string) ([]byte, error) {
 	bikeid := args[0]
 	userid := args[1]
-
-	// TODO:
-	// validate role
-	// if cop and status = Aangifte gedaan -> Aangifte verwerkt (oid)
-	//TODO is done, review needed, see changesatus
-
 	changedBike, err := t.ChangeStatus(stub, bikeid, userid, "Aangifte gedaan")
 	return changedBike, err
 }
 
+func (t *SimpleChaincode) mark_stolen_accepted(stub *shim.ChaincodeStub, args []string) ([]byte, error) {
+	bikeid := args[0]
+	userid := args[1]
+	changedBike, err := t.ChangeStatus(stub, bikeid, userid, "Aangifte bevestigd")
+	return changedBike, err
+}
+
+func (t *SimpleChaincode) mark_found(stub *shim.ChaincodeStub, args []string) ([]byte, error) {
+	bikeid := args[0]
+	userid := args[1]
+	changedBike, err := t.ChangeStatus(stub, bikeid, userid, "Fiets gevonden")
+	return changedBike, err
+}
+
+func (t *SimpleChaincode) mark_retreived(stub *shim.ChaincodeStub, args []string) ([]byte, error) {
+	bikeid := args[0]
+	userid := args[1]
+	changedBike, err := t.ChangeStatus(stub, bikeid, userid, "OK")
+	return changedBike, err
+}
+
 func (t *SimpleChaincode) ChangeStatus(stub *shim.ChaincodeStub, bikeid, userid, status string) ([]byte, error) {
-	// TODO validations, role, etc,
-	// done review needed
+	// TODO validations, role, etc, --> done review needed
 	fmt.Println("[ChangeStatus] " + bikeid + " will be " + status)
 	u, err := t.GetUser(stub, userid)
 	if err != nil {
 		return nil, errors.New("Could not retrieve user from ledger")
 	}
-
 	b, err := t.GetBike(stub, bikeid, u)
 	if err != nil {
 		return nil, errors.New("Could not retrieve bike from ledger")
 	}
+
+	// TODO, kan mogelijk simpeler, voor overzichtelijkheid misschien in een aparte functie?. werkt niet
+	// check states
+	checksum := false
+	allestatussen := []string{"Aangifte gedaan", "Aangifte bevestigd", "Fiets gevonden", "OK"}
+	for _, v := range allestatussen {
+		if v == status {
+			checksum = true
+		}
+	}
+	if !checksum {
+		return nil, errors.New("status bestaat niet")
+	}
+
 	// switch to determin preconditions, and validate input/role
 	switch u.Role {
 	case "":
 		return nil, errors.New("user has no role")
 	case "1":
-		if b.Owner != u.UserId {
+		if b.Owner != u.UserId || status == "Aangifte bevestigd" {
 			return nil, errors.New("gebruiker is geen eigenaar")
 		}
 	case "2":
@@ -489,11 +519,36 @@ func (t *SimpleChaincode) insure(stub *shim.ChaincodeStub, args []string) ([]byt
 		return nil, errors.New("Could not retrieve bike from ledger")
 	}
 
-	// TODO validate
 	// validation: review needed
 	if (user.Role != "1") || (user.UserId != bike.Owner) {
 		return nil, errors.New("User has no rights of insuring the bike, or is not a owner of this bike")
 	}
+	//checksum to see if user exists in frauderegister
+	checksum := true
+	frauderegister := []string{"8e2a67b4f7", "OK"}
+	for _, v := range frauderegister {
+		if v == user.UserId {
+			checksum = false
+			fmt.Println(user.FirstName + " staat in het frauderegister")
+		}
+	}
+	if !checksum {
+		return nil, errors.New("Gebruiker staat in het frauderegister en zal geen verzekering kunnen afsluiten")
+	}
+	//check if the insurance value should be chaged because of cheap selling
+	if bike.SellPrice != 0 && bike.SellPrice < bike.DefaultPrice {
+		bike.InsuranceValue = ((bike.SellPrice + bike.DefaultPrice)/2)
+	} else {
+		bike.InsuranceValue = bike.DefaultPrice
+	}
+	//Rounding the insurancevalue to 2 decimals.
+	if bike.InsuranceValue > 0{
+	pow := math.Pow(10, float64(2))
+	digit := pow * bike.InsuranceValue
+	round := math.Ceil(digit)
+	bike.InsuranceValue = round / pow
+	}
+
 	bike.Insured = true
 
 	bikeAsByteArray, _ := json.Marshal(bike)
@@ -519,6 +574,7 @@ func (t *SimpleChaincode) get_user(stub *shim.ChaincodeStub, userID string) ([]b
 	return bytes, nil
 
 }
+
 
 func (t *SimpleChaincode) get_bike(stub *shim.ChaincodeStub, args []string) ([]byte, error) {
 
@@ -591,8 +647,31 @@ func (t *SimpleChaincode) GetUser(stub *shim.ChaincodeStub, username string) (Us
 	return u, err
 }
 
+
+func(t *SimpleChaincode) get_all_users(stub *shim.ChaincodeStub) ([]byte, error){
+	//svar userlist []User
+	var userlistid []string
+	var userlist []User
+	fmt.Println("hier komt hij wel")
+	userbytes, err := stub.GetState(usersIndexStr)
+	err = json.Unmarshal(userbytes, &userlistid)
+	for _, userid := range userlistid {
+		user, err := t.GetUser(stub, userid)
+		if err == nil {
+			userlist = append(userlist, user)
+		}
+	}
+	returnlist, err := json.Marshal(userlist)
+	if err != nil {
+		return returnlist, errors.New("Unable to get users ")
+	}
+	return returnlist, err
+}
+
+
+
 func (t *SimpleChaincode) GetBike(stub *shim.ChaincodeStub, bikeid string, u User) (Bike, error) {
-	fmt.Println("[GetBike] Retrieving bike: " + bikeid)
+	fmt.Println("[GetBike] Retrieving bike: " + bikeid + u.UserId)
 	var b Bike
 	bytes, err := stub.GetState(bikeid)
 	if err != nil {
@@ -601,7 +680,8 @@ func (t *SimpleChaincode) GetBike(stub *shim.ChaincodeStub, bikeid string, u Use
 	err = json.Unmarshal(bytes, &b)
 
 	//create switch, check role. if role is 1, its a normal user
-	fmt.Println("role is " + u.Role)
+	fmt.Println("role is " + u.Address + u.PhoneNumber)
+	fmt.Println("ID is " + u.UserId)
 	switch u.Role {
 	case "":
 		return b, errors.New("user has no role")
@@ -621,8 +701,20 @@ func (t *SimpleChaincode) GetBike(stub *shim.ChaincodeStub, bikeid string, u Use
 	default:
 		return b, errors.New("undefined role")
 	}
-	//moddify results by role TODO nog niet af
+	//moddify results by role TODO werkt, meer onderscheid maken?
 	if u.Role == "2" {
+		b.DefaultPrice = 0
+	}
+	if u.Role == "3"{
+
+		b.BikeId 	= "Not Visible"
+		b.FrameNumber 	= "Not Visible"
+		b.LockId  	= "Not Visible"
+		b.Brand  	= "Not Visible"
+		b.Type 		= "Not Visible"
+		b.YearOfBuild 	= "Not Visible"
+		b.Color 	= "Not Visible"
+		b.Comments 	= "Not Visible"
 
 	}
 
@@ -648,9 +740,7 @@ func (t *SimpleChaincode) GetAllBikes(stub *shim.ChaincodeStub, u User) ([]Bike,
 	for _, bikeid := range bikesIndex {
 		bike, err := t.GetBike(stub, bikeid, u)
 
-		// TODO: disable certain fields based on role
-
-
+		// TODO: disable certain fields based on role --> moved this to the getbike function
 		if err == nil {
 			bikes = append(bikes, bike)
 		}
