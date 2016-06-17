@@ -120,6 +120,8 @@ func (t *SimpleChaincode) Invoke(stub *shim.ChaincodeStub, function string, args
 		return t.change_bike(stub, args)
 	} else if function == "mark_stolen" {
 		return t.mark_stolen(stub, args)
+	} else if function == "mark_stolen_accepted" {
+		return t.mark_stolen_accepted(stub, args)
 	} else if function == "insure" {
 		return t.insure(stub, args)
 	}
@@ -435,6 +437,7 @@ func (t *SimpleChaincode) mark_stolen(stub *shim.ChaincodeStub, args []string) (
 	bikeid := args[0]
 	userid := args[1]
 	changedBike, err := t.ChangeStatus(stub, bikeid, userid, "Aangifte gedaan")
+	fmt.Println(err)
 	return changedBike, err
 }
 
@@ -442,6 +445,7 @@ func (t *SimpleChaincode) mark_stolen_accepted(stub *shim.ChaincodeStub, args []
 	bikeid := args[0]
 	userid := args[1]
 	changedBike, err := t.ChangeStatus(stub, bikeid, userid, "Aangifte bevestigd")
+	fmt.Println(err)
 	return changedBike, err
 }
 
@@ -449,6 +453,7 @@ func (t *SimpleChaincode) mark_found(stub *shim.ChaincodeStub, args []string) ([
 	bikeid := args[0]
 	userid := args[1]
 	changedBike, err := t.ChangeStatus(stub, bikeid, userid, "Fiets gevonden")
+	fmt.Println(err)
 	return changedBike, err
 }
 
@@ -456,6 +461,7 @@ func (t *SimpleChaincode) mark_retreived(stub *shim.ChaincodeStub, args []string
 	bikeid := args[0]
 	userid := args[1]
 	changedBike, err := t.ChangeStatus(stub, bikeid, userid, "OK")
+	fmt.Println(err)
 	return changedBike, err
 }
 
@@ -493,7 +499,7 @@ func (t *SimpleChaincode) ChangeStatus(stub *shim.ChaincodeStub, bikeid, userid,
 			return nil, errors.New("gebruiker is geen eigenaar")
 		}
 	case "2":
-		if b.Status != "Aangifte gedaan" || (b.Status != "Aangifte bevestigd" || (b.Status != "Fiets gevonden")) {
+		if b.Status != "Aangifte gedaan" && b.Status != "Aangifte bevestigd" && b.Status != "Fiets gevonden" {
 			return nil, errors.New("Fiets niet gestolen, wijzigen moet gebeuren vanuit de gebruiker")
 		}
 	default:
@@ -525,7 +531,7 @@ func (t *SimpleChaincode) insure(stub *shim.ChaincodeStub, args []string) ([]byt
 	}
 	//checksum to see if user exists in frauderegister
 	checksum := true
-	frauderegister := []string{"8e2a67b4f7", "OK"}
+	frauderegister := []string{"xxxxx8e2a67b4f7", "OK"}
 	for _, v := range frauderegister {
 		if v == user.UserId {
 			checksum = false
@@ -671,7 +677,7 @@ func(t *SimpleChaincode) get_all_users(stub *shim.ChaincodeStub) ([]byte, error)
 
 
 func (t *SimpleChaincode) GetBike(stub *shim.ChaincodeStub, bikeid string, u User) (Bike, error) {
-	fmt.Println("[GetBike] Retrieving bike: " + bikeid + u.UserId)
+	fmt.Println("[GetBike] Retrieving bike: " + bikeid + " from owner " + u.UserId)
 	var b Bike
 	bytes, err := stub.GetState(bikeid)
 	if err != nil {
@@ -680,8 +686,7 @@ func (t *SimpleChaincode) GetBike(stub *shim.ChaincodeStub, bikeid string, u Use
 	err = json.Unmarshal(bytes, &b)
 
 	//create switch, check role. if role is 1, its a normal user
-	fmt.Println("role is " + u.Address + u.PhoneNumber)
-	fmt.Println("ID is " + u.UserId)
+	fmt.Println("User with id " + u.UserId + " has role " + u.Role)
 	switch u.Role {
 	case "":
 		return b, errors.New("user has no role")
@@ -691,7 +696,7 @@ func (t *SimpleChaincode) GetBike(stub *shim.ChaincodeStub, bikeid string, u Use
 		}
 
 	case "2":
-		if b.Status != "Aangifte gedaan" {
+		if b.Status != "Aangifte gedaan" && b.Status != "Aangifte bevestigd" {
 			return b, errors.New("Fiets niet gestolen")
 		}
 	case "3":
